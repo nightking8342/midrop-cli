@@ -1,6 +1,2 @@
-def main():
-    raise SystemExit("cli not ready; run after Task 2")
-
-
-if __name__ == "__main__":
-    main()
+from midrop_cli.cli import main
+raise SystemExit(main())
