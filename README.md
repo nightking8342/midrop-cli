@@ -23,7 +23,7 @@ midrop config set default_device Fold
 | 命令 | 说明 |
 |------|------|
 | `midrop send <path> [--device KW] [--mode noui\|rpa]` | 发送（默认 noui） |
-| `midrop devices` | UIA 列出弹窗设备 |
+| `midrop devices [--source live\|uia]` | **默认 live**：实时 id_hex + device_id；`uia` 仅弹窗名 |
 | `midrop doctor` | 环境检查（含 frida） |
 | `midrop config …` | 配置 |
 

@@ -46,10 +46,21 @@ def emit(data: dict[str, Any], fmt: str) -> None:
                 _safe_print(str(data["note"]))
         elif action == "devices":
             devs = data.get("devices") or []
-            _safe_print(f"[ok] devices ({len(devs)})")
+            src = data.get("source") or ""
+            _safe_print(f"[ok] devices ({len(devs)})" + (f" source={src}" if src else ""))
             for d in devs:
-                name = d.get("name", d) if isinstance(d, dict) else d
-                _safe_print(f"  - {name}")
+                if isinstance(d, dict):
+                    name = d.get("name", "")
+                    hex_id = d.get("id_hex") or d.get("device_hex")
+                    did = d.get("device_id")
+                    if hex_id is not None and did is not None:
+                        _safe_print(f"  - {name}  id_hex={hex_id}  device_id={did}")
+                    elif hex_id is not None:
+                        _safe_print(f"  - {name}  id_hex={hex_id}")
+                    else:
+                        _safe_print(f"  - {name}")
+                else:
+                    _safe_print(f"  - {d}")
         elif action == "doctor":
             _safe_print(f"[ok] doctor healthy={data.get('healthy')}")
             for c in data.get("checks") or []:

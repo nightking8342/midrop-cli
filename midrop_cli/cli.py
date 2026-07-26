@@ -42,8 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="rpa only: show picker without clicking",
     )
 
-    d = sub.add_parser("devices", help="List devices from MiDrop popup (UIA)", parents=[fmt])
+    d = sub.add_parser(
+        "devices",
+        help="List devices with ids (live) or UIA names",
+        parents=[fmt],
+    )
     d.add_argument("--timeout", type=float, default=12.0)
+    d.add_argument(
+        "--source",
+        choices=("live", "uia"),
+        default="live",
+        help="live=Frida in-process ids (default); uia=popup names only",
+    )
 
     sub.add_parser("doctor", help="Check environment", parents=[fmt])
 
@@ -161,15 +171,43 @@ def cmd_send(args) -> int:
 
 
 def cmd_devices(args) -> int:
-    try:
-        from midrop_cli.core import send as send_mod
-    except ImportError:
-        emit({"ok": False, "action": "devices", "error": "not_implemented", "message": "core not ready"}, _fmt(args))
-        return EXIT_ERROR
-    result = send_mod.list_devices_flow(
-        timeout=args.timeout,
-        launch_path=cfg.load()["launch_path"],
-    )
+    source = getattr(args, "source", None) or "live"
+    if source == "uia":
+        try:
+            from midrop_cli.core import send as send_mod
+        except ImportError:
+            emit(
+                {
+                    "ok": False,
+                    "action": "devices",
+                    "error": "not_implemented",
+                    "message": "core not ready",
+                },
+                _fmt(args),
+            )
+            return EXIT_ERROR
+        result = send_mod.list_devices_flow(
+            timeout=args.timeout,
+            launch_path=cfg.load()["launch_path"],
+        )
+        if isinstance(result, dict):
+            result.setdefault("source", "uia")
+    else:
+        try:
+            from midrop_cli.core.live_devices import list_devices_live
+        except ImportError:
+            emit(
+                {
+                    "ok": False,
+                    "action": "devices",
+                    "source": "live",
+                    "error": "not_implemented",
+                    "message": "live_devices not ready",
+                },
+                _fmt(args),
+            )
+            return EXIT_ERROR
+        result = list_devices_live(timeout=args.timeout, cfg_data=cfg.load())
     emit(result, _fmt(args))
     return int(result.get("exit_code", EXIT_ERROR if not result.get("ok") else EXIT_OK))
 

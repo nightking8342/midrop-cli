@@ -27,9 +27,14 @@ Agent 调用请始终加 `--format json`。
 **noui**：FileMapping + Launch + Frida 在 UI 线程调 `HandleCreateSendTask`（可锁屏）。  
 **rpa**：弹窗 + UIA 点设备（锁屏易假成功）。保留作 fallback。
 
-### `midrop devices [--timeout SEC]`
+### `midrop devices [--source live|uia] [--timeout SEC]`
 
-UIA 枚举弹窗设备名（与 rpa 同源）。
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--source live` | Frida 扫进程内存，**实时**返回 `name` + `id_hex` + `device_id` | **live** |
+| `--source uia` | 弹窗 UIA，仅中文显示名（旧） | |
+
+live 不读日志文件；id 来自管家进程内 Lyra 十六进制字符串。
 
 ### `midrop doctor`
 
