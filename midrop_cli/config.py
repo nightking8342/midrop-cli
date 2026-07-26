@@ -7,12 +7,20 @@ import os
 from pathlib import Path
 from typing import Any
 
-ALLOWED_KEYS = ("default_device", "launch_path", "hold_seconds")
+ALLOWED_KEYS = (
+    "default_device",
+    "launch_path",
+    "hold_seconds",
+    "send_mode",
+    "device_map",
+)
 
 DEFAULTS: dict[str, Any] = {
     "default_device": "",
     "launch_path": r"C:\Program Files\MI\XiaomiPCManager\Launch.exe",
     "hold_seconds": 8,
+    "send_mode": "noui",  # noui | rpa
+    "device_map": "",  # optional JSON object alias->id
 }
 
 
@@ -37,13 +45,20 @@ def load() -> dict[str, Any]:
                         data[k] = raw[k]
         except (OSError, json.JSONDecodeError):
             pass
-    # 类型修正
     try:
         data["hold_seconds"] = int(data["hold_seconds"])
     except (TypeError, ValueError):
         data["hold_seconds"] = DEFAULTS["hold_seconds"]
     if data.get("default_device") is None:
         data["default_device"] = ""
+    mode = str(data.get("send_mode") or "noui").strip().lower()
+    if mode not in ("noui", "rpa", "ui", "legacy"):
+        mode = "noui"
+    if mode in ("ui", "legacy"):
+        mode = "rpa"
+    data["send_mode"] = mode
+    if data.get("device_map") is None:
+        data["device_map"] = ""
     return data
 
 
@@ -59,6 +74,13 @@ def set_key(key: str, value: str) -> dict[str, Any]:
     data = load()
     if key == "hold_seconds":
         data[key] = int(value)
+    elif key == "send_mode":
+        m = value.strip().lower()
+        if m in ("ui", "legacy"):
+            m = "rpa"
+        if m not in ("noui", "rpa"):
+            raise ValueError("send_mode must be noui or rpa")
+        data[key] = m
     else:
         data[key] = value
     d = config_dir()

@@ -53,3 +53,14 @@ def test_send_device_required(conf_env, capsys, tmp_path):
     assert code == 1
     out = json.loads(capsys.readouterr().out)
     assert out["error"] == "device_required"
+
+
+def test_config_send_mode(conf_env, capsys):
+    cli = conf_env
+    code = cli.main(["config", "set", "send_mode", "rpa", "--format", "json"])
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["value"] == "rpa"
+    code = cli.main(["config", "get", "send_mode", "--format", "json"])
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["value"] == "rpa"

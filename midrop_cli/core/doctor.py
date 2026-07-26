@@ -117,7 +117,32 @@ def run_doctor(cfg_data: dict[str, Any] | None = None) -> dict[str, Any]:
 
     uia_status, uia_detail = _check_uia()
     checks.append({"name": "uia", "status": uia_status, "detail": uia_detail})
+    # UIA only required for rpa / devices; noui uses Frida
     uia_ok = uia_status == "ok"
+
+    # Frida (required for default noui mode)
+    try:
+        from midrop_cli.core.noui import frida_available
+
+        frida_ok, frida_detail = frida_available()
+    except Exception as e:
+        frida_ok, frida_detail = False, str(e)
+    checks.append(
+        {
+            "name": "frida",
+            "status": "ok" if frida_ok else "fail",
+            "detail": frida_detail if frida_ok else f"not available: {frida_detail}",
+        }
+    )
+
+    mode = str(data.get("send_mode") or "noui").lower()
+    checks.append(
+        {
+            "name": "send_mode",
+            "status": "ok",
+            "detail": mode,
+        }
+    )
 
     conf_path = cfg.config_path()
     checks.append(
@@ -128,7 +153,11 @@ def run_doctor(cfg_data: dict[str, Any] | None = None) -> dict[str, Any]:
         }
     )
 
-    healthy = launch_ok and process_ok and uia_ok
+    if mode == "rpa":
+        healthy = launch_ok and process_ok and uia_ok
+    else:
+        # noui default
+        healthy = launch_ok and process_ok and frida_ok
     return {
         "ok": True,
         "action": "doctor",

@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
-import time
 from typing import Any
 
 from midrop_cli import __version__
@@ -19,7 +17,6 @@ EXIT_CLICK = 4
 
 
 def build_parser() -> argparse.ArgumentParser:
-    # 共享 --format，使全局选项可写在子命令之后（测试与人机习惯）
     fmt = argparse.ArgumentParser(add_help=False)
     fmt.add_argument("--format", choices=("json", "text"), default=None)
 
@@ -28,14 +25,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=("json", "text"), default=None)
     sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("send", help="Send file via MiDrop", parents=[fmt])
+    s = sub.add_parser("send", help="Send file via MiDrop (default: noui)", parents=[fmt])
     s.add_argument("path")
-    s.add_argument("--device", default=None)
+    s.add_argument("--device", default=None, help="alias Fold/Pad, 0xHEX, or decimal id")
+    s.add_argument(
+        "--mode",
+        choices=("noui", "rpa"),
+        default=None,
+        help="noui=Frida in-process (default); rpa=legacy UIA click",
+    )
     s.add_argument("--timeout", type=float, default=12.0)
     s.add_argument("--hold", type=float, default=None)
-    s.add_argument("--no-click", action="store_true")
+    s.add_argument(
+        "--no-click",
+        action="store_true",
+        help="rpa only: show picker without clicking",
+    )
 
-    d = sub.add_parser("devices", help="List devices from MiDrop popup", parents=[fmt])
+    d = sub.add_parser("devices", help="List devices from MiDrop popup (UIA)", parents=[fmt])
     d.add_argument("--timeout", type=float, default=12.0)
 
     sub.add_parser("doctor", help="Check environment", parents=[fmt])
@@ -78,33 +85,76 @@ def cmd_config(args) -> int:
         except (ValueError, TypeError) as e:
             emit({"ok": False, "action": "config", "error": "config_error", "message": str(e)}, _fmt(args))
             return EXIT_ERROR
-        emit({"ok": True, "action": "config", "op": "set", "key": args.key, "value": data[args.key], "config": data}, _fmt(args))
+        emit(
+            {
+                "ok": True,
+                "action": "config",
+                "op": "set",
+                "key": args.key,
+                "value": data[args.key],
+                "config": data,
+            },
+            _fmt(args),
+        )
         return EXIT_OK
     return EXIT_ERROR
 
 
 def cmd_send(args) -> int:
     path = os.path.abspath(args.path)
+    conf = cfg.load()
     if not os.path.isfile(path):
-        emit({"ok": False, "action": "send", "error": "file_not_found", "message": f"file not found: {path}", "file": path}, _fmt(args))
+        emit(
+            {
+                "ok": False,
+                "action": "send",
+                "error": "file_not_found",
+                "message": f"file not found: {path}",
+                "file": path,
+            },
+            _fmt(args),
+        )
         return EXIT_ERROR
-    device = args.device if args.device is not None else cfg.load().get("default_device") or ""
+    device = args.device if args.device is not None else conf.get("default_device") or ""
     if not str(device).strip():
-        emit({"ok": False, "action": "send", "error": "device_required", "message": "pass --device or set default_device", "file": path}, _fmt(args))
+        emit(
+            {
+                "ok": False,
+                "action": "send",
+                "error": "device_required",
+                "message": "pass --device or set default_device",
+                "file": path,
+            },
+            _fmt(args),
+        )
         return EXIT_ERROR
-    # Task 3+ 实现真正发送；此处若 core 可用则调用
+
+    mode = args.mode if args.mode is not None else conf.get("send_mode") or "noui"
+
     try:
         from midrop_cli.core import send as send_mod
     except ImportError:
-        emit({"ok": False, "action": "send", "error": "not_implemented", "message": "core.send not ready", "file": path}, _fmt(args))
+        emit(
+            {
+                "ok": False,
+                "action": "send",
+                "error": "not_implemented",
+                "message": "core.send not ready",
+                "file": path,
+            },
+            _fmt(args),
+        )
         return EXIT_ERROR
+
     result = send_mod.send_file(
         path,
         device_query=str(device),
         timeout=args.timeout,
-        hold=args.hold if args.hold is not None else float(cfg.load()["hold_seconds"]),
+        hold=args.hold if args.hold is not None else float(conf["hold_seconds"]),
         no_click=bool(args.no_click),
-        launch_path=cfg.load()["launch_path"],
+        launch_path=conf["launch_path"],
+        mode=str(mode),
+        cfg_data=conf,
     )
     emit(result, _fmt(args))
     return int(result.get("exit_code", EXIT_ERROR if not result.get("ok") else EXIT_OK))

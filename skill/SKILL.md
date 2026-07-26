@@ -1,11 +1,22 @@
 ---
 name: midrop-cli
-description: 把电脑上的文件通过小米互传（MiDrop）发到小米手机或平板。用户说「发到我手机」「互传」「传到 Fold/Pad」「发到平板」「MiDrop」时使用。通过 midrop CLI 执行，禁止手写共享内存或 UIA 脚本。
+description: 把电脑上的文件通过小米互传（MiDrop）发到小米手机或平板。用户说「发到我手机」「互传」「传到 Fold/Pad」「发到平板」「MiDrop」时使用。通过 midrop CLI 执行，禁止手写共享内存、UIA 或 Frida 脚本。
 ---
 
 # midrop CLI
 
 用 PATH 上的 `midrop` 命令把文件发到小米设备。执行层是 CLI；本 skill 只负责路由与结果解读。
+
+## 发送模式
+
+- **默认 `noui`**：Frida 进程内调用 `HandleCreateSendTask`（可锁屏；不点 UI）
+- **备选 `rpa`**：弹窗 + UIA 点设备（旧方式；锁屏易假成功）
+
+```bash
+midrop send "PATH" --device Fold --format json          # 默认 noui
+midrop send "PATH" --device Pad --mode rpa --format json # 强制旧方式
+midrop config set send_mode noui|rpa
+```
 
 ## 何时使用
 
@@ -20,26 +31,28 @@ description: 把电脑上的文件通过小米互传（MiDrop）发到小米手�
 ## 工作流
 
 1. 环境不确定 → `midrop doctor --format json`
-   - `healthy: false` 或 exit 2 → 摘要 checks，让用户打开小米电脑管家，不要盲目重试 send
+   - `healthy: false` 或 exit 2 → 摘要 checks（管家进程、frida、Launch）
+   - noui 需要 **frida** 检查为 ok
 2. 确认本地文件绝对路径存在
-3. 选择设备参数：
-   - 手机 / Fold / MIX → `--device Fold`（或用户说过的关键字）
+3. 设备参数：
+   - 手机 / Fold / MIX → `--device Fold`
    - 平板 / Pad → `--device Pad`
-   - 未指定 → 不传 `--device`（用 default_device）
-4. 关键字不确定 → `midrop devices --format json`，用返回的 `name` 再 send
-5. 发送：`midrop send "ABS_PATH" [--device KW] --format json`
-6. 解读：
-   - exit 0 且 `clicked: true` → 告诉用户 **PC 已发起发送** 到 `device_matched`；若手机需确认请在手机上点接收。**禁止**说「已保存到手机成功」
-   - exit 3 → 弹窗/设备超时或未匹配，展示 message 与 candidates
-   - exit 2 → 环境问题，建议 doctor
-   - exit 4 → 点击失败，可请用户手动点弹窗
+   - 未指定 → 省略 `--device`（用 `default_device`）
+4. 发送：`midrop send "ABS_PATH" [--device KW] --format json`
+5. 解读：
+   - exit 0 且 `ok: true` → **PC 已发起**（看 `mode` 字段：`noui` 或 `rpa`）
+   - **禁止**说「手机已保存成功」
+   - `mode=noui` 时看 `noui_invoked` / logs；`mode=rpa` 时 `clicked:true` 在锁屏下可能假成功
+   - exit 2 → 环境（无管家 / 无 frida / 无 Launch）
+   - exit 3 → 超时 / 设备未解析
 
 ## 禁止
 
-- 禁止自己写 CreateFileMapping / Launch.exe 脚本
+- 禁止自己写 CreateFileMapping / Frida / UIA 脚本
 - 禁止在 doctor 失败时循环重试 send
 - 禁止未确认路径就发送
 
 ## 参考
 
 - 命令契约见 `references/cli-contract.md`
+- 研究笔记：仓库内 `docs/research-backend-api.md`
