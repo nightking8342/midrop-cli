@@ -163,22 +163,52 @@ mov dword ptr [rbp-0x70], 4   ; TaskFromType = 4 写死在函数内
 cmp qword ptr [r13+0x18], 8   ; parent_dir.capacity SSO 判断
 ```
 
-### 主动调用 PoC（未完全成功）
+### 主动调用 PoC
 
-脚本：`tools/frida_invoke_createsend.py`
-
-| 尝试 | 结果 |
+| 脚本 | 结果 |
 |------|------|
-| 直接在 Frida JS 线程 `NativeFunction` 调用 | 可能卡死 / 访问冲突 |
-| `CreateThread` 新线程调用 | **Wait 超时 (258)**，函数不返回 → **强依赖 UI/业务线程** |
-| 自建 `std::list` / `wstring` | 曾出现路径乱码（布局/编码错误） |
+| `tools/frida_invoke_createsend.py` | 任意/新线程裸调 → 卡死；不可用 |
+| **`tools/frida_noui_send.py`** | **成功**（见下） |
 
-结论：
+### 无 UI 发送成功路径（2026-07-26 亮屏实测）
 
-1. **参数约定已证实**，可挂钩。  
-2. **不能在任意线程裸调**；需投递到管家业务/UI 线程（消息队列 / 其内部 executor）。  
-3. 自建 MSVC `std::list`/`wstring` 布局必须与运行时完全一致，否则路径损坏。  
-4. 产品级无 UI 后台仍需：线程投递 + 正确 C++ 对象构造（或进程内用 C++ 编译 helper 更稳）。
+脚本：`tools/frida_noui_send.py`
+
+流程：
+
+1. Frida 附加 `XiaomiPcManager`  
+2. Hook `OpenFromMenuWindow`（RVA `0x148260`）的 **onLeave**（此时在 UI 线程）  
+3. 写 `Local\MiDropFileMappingObject` + `Launch.exe --contextmenu_dropfile=1`  
+4. `OpenFromMenuWindow` 返回时，在同一线程调用：  
+   `HandleCreateSendTask(GetMiDropBusiness(), device_id, list{path}, empty_parent_dir)`  
+5. **不点设备列表**
+
+实测日志：
+
+```text
+OpenFromMenuWindow file_name: midrop_noui_test.txt
+HandleCreateSendTask device_id 3513666063, selected_parent_dir , size 1, TaskFromType <noise>
+IsLivePhoto file C:\tmp\midrop_noui_test.txt
+OnTaskSucceed task_id 45797, device_id 3513666063
+```
+
+用户确认手机收到 `midrop_noui_test.txt`。
+
+| 条件 | 状态 |
+|------|------|
+| 不 UIA 点设备 | ✅ |
+| 进程内 CreateSend | ✅ |
+| 必须管家进程 + UI 线程 | ✅ |
+| 仍触发菜单入口（FileMapping+Launch） | ✅（用于进入 UI 线程上下文） |
+| 关屏/锁屏 | 未验证；设备发现仍可能失败 |
+| Frida 返回值 | 曾报 `system error`，但日志 `OnTaskSucceed` 为准 |
+
+`std::list` / `wstring` 布局（MSVC x64，实机 dump）：
+
+- `list`: `{ node* head; size_t size; }`  
+- `node`: `{ next*, prev*, wstring value[32] }` 循环链表  
+- `wstring` 非 SSO：`{ wchar_t* ptr; size; capacity>=8 }`（例 size=28 cap=31）  
+- 空 `parent_dir`：size=0, capacity=7  
 
 ### 工具清单
 
@@ -186,4 +216,5 @@ cmp qword ptr [r13+0x18], 8   ; parent_dir.capacity SSO 判断
 |------|------|
 | `tools/frida_capture_createsend.py` | 挂钩抓参（已验证） |
 | `tools/frida_hook_createsend.js` | 同上（CLI frida -l） |
-| `tools/frida_invoke_createsend.py` | 主动调用实验（未完成） |
+| `tools/frida_invoke_createsend.py` | 裸线程调用（失败，仅作对照） |
+| **`tools/frida_noui_send.py`** | **无 UI 发送 PoC（成功）** |
