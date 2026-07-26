@@ -125,3 +125,65 @@ OperateMidropIdToLyraId(lyraId, midropId)
 - `C:\Program Files\MI\XiaomiPCManager\5.5.0.18\MiSmartShareDLL.dll`  
 - Shell：`MiDropShellExt.dll` / `Launch.exe`  
 - 传输：`MiDropTransfer.dll`、`midrop` Lyra 相关符号  
+
+## Frida 动态验证（2026-07-26 续）
+
+### 函数定位
+
+| 项 | 值 |
+|----|-----|
+| 模块 | `MiSmartShareDLL.dll` |
+| `HandleCreateSendTask` RVA | **`0x1465F0`**（`.pdata` + 日志字符串 xref 双重确认） |
+| 序言 | `40 55 53 56 57 41 54...` (`push rbp` ...) |
+| `GetMiDropBusiness` 导出 | `?GetMiDropBusiness@midrop@@YAPEAVIMiDropBusiness@1@XZ` RVA `0x14F1C0` |
+
+### 运行时抓参（成功，UI 点击路径）
+
+脚本：`tools/frida_capture_createsend.py`  
+样本：`midrop send ... --device Fold` 触发后：
+
+```text
+this (rcx)     = 0x7ff84e63b6c0   // == GetMiDropBusiness() 返回值
+device_id (rdx)= 3513666063       // 0xD16E4A0F Fold
+paths (r8)     = std::list → ["C:\\tmp\\midrop_frida2.txt"]
+r9             = selected_parent_dir (std::wstring，CLI 时多为空)
+返回           = 0
+```
+
+反汇编确认：
+
+```asm
+mov r13, r9      ; parent_dir wstring*
+mov r12, r8      ; list*
+mov edi, edx     ; device_id
+mov r14, rcx     ; this
+...
+mov dword ptr [rbp-0x70], 4   ; TaskFromType = 4 写死在函数内
+...
+cmp qword ptr [r13+0x18], 8   ; parent_dir.capacity SSO 判断
+```
+
+### 主动调用 PoC（未完全成功）
+
+脚本：`tools/frida_invoke_createsend.py`
+
+| 尝试 | 结果 |
+|------|------|
+| 直接在 Frida JS 线程 `NativeFunction` 调用 | 可能卡死 / 访问冲突 |
+| `CreateThread` 新线程调用 | **Wait 超时 (258)**，函数不返回 → **强依赖 UI/业务线程** |
+| 自建 `std::list` / `wstring` | 曾出现路径乱码（布局/编码错误） |
+
+结论：
+
+1. **参数约定已证实**，可挂钩。  
+2. **不能在任意线程裸调**；需投递到管家业务/UI 线程（消息队列 / 其内部 executor）。  
+3. 自建 MSVC `std::list`/`wstring` 布局必须与运行时完全一致，否则路径损坏。  
+4. 产品级无 UI 后台仍需：线程投递 + 正确 C++ 对象构造（或进程内用 C++ 编译 helper 更稳）。
+
+### 工具清单
+
+| 文件 | 用途 |
+|------|------|
+| `tools/frida_capture_createsend.py` | 挂钩抓参（已验证） |
+| `tools/frida_hook_createsend.js` | 同上（CLI frida -l） |
+| `tools/frida_invoke_createsend.py` | 主动调用实验（未完成） |
