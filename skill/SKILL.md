@@ -11,8 +11,10 @@ description: 把电脑上的文件通过小米互传（MiDrop）发到小米手�
 
 - **默认 `silent`**：Frida 挂 UI 线程消息泵调 `HandleCreateSendTask`。
   **全程零弹窗**、可锁屏，并读管家日志确认 `OnTaskSucceed`
-- **备选 `noui`**：借菜单窗口进 UI 线程（会闪一下设备弹窗）；silent 挂了才用
-- **兜底 `rpa`**：弹窗 + UIA 点设备（旧方式；锁屏易假成功）
+- **兜底 `menu`**：借菜单窗口进 UI 线程（**会闪一下设备弹窗**，慢一倍）；
+  silent 挂了才用。旧名 `noui`，仍作别名接受
+
+旧的 `rpa`（UIA 点设备）已删除，别再传 `--mode rpa`。
 
 ## 列设备
 
@@ -21,8 +23,8 @@ description: 把电脑上的文件通过小米互传（MiDrop）发到小米手�
 
 ```bash
 midrop send "PATH" --device Fold --format json           # 默认 silent，零弹窗
-midrop send "PATH" --device Pad --mode noui --format json # silent 挂了才退到 noui
-midrop config set send_mode silent|noui|rpa
+midrop send "PATH" --device Pad --mode menu --format json # silent 挂了才退到 menu
+midrop config set send_mode silent|menu
 ```
 
 ## 何时使用
@@ -39,7 +41,7 @@ midrop config set send_mode silent|noui|rpa
 
 1. 环境不确定 → `midrop doctor --format json`
    - `healthy: false` 或 exit 2 → 摘要 checks（管家进程、frida、Launch）
-   - silent / noui 都需要 **frida** 检查为 ok
+   - silent / menu 都需要 **frida** 检查为 ok
 2. 确认本地文件绝对路径存在
 3. 设备参数：
    - 手机 / Fold / MIX → `--device Fold`
@@ -54,7 +56,7 @@ midrop config set send_mode silent|noui|rpa
        → **设备休眠没确认连接**。已自动重试过（看 `attempts`）。
        让用户点亮手机屏幕后重发，不要连环重试
      - `error: confirm_timeout` → 已发起但日志没等到终态，状态未知
-   - `mode=noui` / `rpa`：`ok: true` **只代表 PC 侧调用成功**，
+   - `mode=menu`：`ok: true` **只代表 PC 侧调用成功**，
      不等于手机收到 —— 此时**禁止**说「已送达」，只说「已发起」
    - exit 2 → 环境（无管家 / 无 frida / 无 Launch）
    - exit 3 → 超时 / 设备未解析

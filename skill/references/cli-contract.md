@@ -13,24 +13,26 @@ Agent 调用请始终加 `--format json`。
 
 ## Commands
 
-### `midrop send <path> [--device KW] [--mode silent|noui|rpa] [--timeout SEC] [--hold SEC] [--retry N] [--no-confirm] [--no-click]`
+### `midrop send <path> [--device KW] [--mode silent|menu] [--timeout SEC] [--hold SEC] [--retry N] [--no-confirm]`
 
 | Flag | Meaning | Default |
 |------|---------|---------|
 | `path` | 本地文件 | required |
 | `--device` | Fold/Pad/0xHEX/decimal | `config.default_device` |
-| `--mode` | **`silent`**（默认）零弹窗；**`noui`** 闪弹窗；**`rpa`** 旧 UIA | `config.send_mode` → silent |
+| `--mode` | **`silent`**（默认）零弹窗；**`menu`** 闪弹窗兜底 | `config.send_mode` → silent |
 | `--timeout` | 等待秒数 | `12` |
-| `--hold` | 发送后保持映射（仅 noui/rpa） | `hold_seconds` |
+| `--hold` | 发送后保持映射（仅 menu） | `hold_seconds` |
 | `--retry` | 仅 silent：设备休眠时的额外重试次数 | `1` |
 | `--no-confirm` | 仅 silent：不等日志确认，调用成功即返回 | off |
-| `--no-click` | 仅 rpa：只弹窗 | off |
 
 **silent**：Frida 挂 `user32!GetMessageW`，在管家 UI 线程的常驻消息泵里调
 `HandleCreateSendTask`。不写共享内存、不调 Launch.exe、**不弹任何窗口**，
 并读日志确认 `OnTaskSucceed`。可锁屏。  
-**noui**：FileMapping + Launch + hook `OpenFromMenuWindow`（会闪弹窗）。silent 挂了才用。  
-**rpa**：弹窗 + UIA 点设备（锁屏易假成功）。最后兜底。
+**menu**：FileMapping + Launch + hook `OpenFromMenuWindow`（**会闪弹窗**，慢一倍）。
+silent 挂了才用。旧名 `noui` 仍作别名接受，但输出一律报 `menu`。
+
+> `rpa`（弹窗 + UIA 点设备）**已删除**。`--mode rpa` 会被 argparse 拒绝；
+> 配置里残留的 `send_mode: rpa` 自动落到 silent。
 
 ### `midrop devices [--source live|uia] [--timeout SEC]`
 
@@ -44,7 +46,8 @@ Agent 调用请始终加 `--format json`。
 ### `midrop doctor`
 
 检查 Launch、进程、frida、uia、send_mode、配置。  
-默认 silent 时 **healthy 需要 frida + 管家进程**（Launch.exe 仅 noui/rpa 需要）。
+默认 silent 时 **healthy 需要 frida + 管家进程**（Launch.exe 仅 menu 需要，
+silent 下缺失只报 warn）。uia 检查任何模式都不影响 healthy。
 
 ### `midrop config …`
 
@@ -53,7 +56,7 @@ Agent 调用请始终加 `--format json`。
 | `default_device` | 默认设备别名 | 空 |
 | `launch_path` | Launch.exe | 安装目录下 |
 | `hold_seconds` | 保持映射秒数 | 8 |
-| `send_mode` | `silent` \| `noui` \| `rpa` | `silent` |
+| `send_mode` | `silent` \| `menu` | `silent` |
 | `device_map` | JSON 别名→id 覆盖 | 空 |
 
 ## Exit codes
@@ -107,15 +110,15 @@ Agent 调用请始终加 `--format json`。
 ```
 
 设备深度休眠时第一次连接必超时（`15033 remote confirm timeout` 或 `15006 conn
-timeout`），**与发送路径无关** —— 同一时刻 `--mode noui` 一样失败。失败那次会唤醒
+timeout`），**与发送路径无关** —— 同一时刻 `--mode menu` 一样失败。失败那次会唤醒
 设备，故默认 `--retry 1`。两次都失败就让用户点亮屏幕，别连环重试。
 
-## noui / rpa 的 ok 语义不同
+## menu 的 ok 语义不同
 
-`mode=noui` / `mode=rpa` 的 `ok: true` **只表示 PC 侧调用/点击成功**，不读日志确认，
-手机没收到也会报成功（已实测）。这两种模式下只能说「已发起」。
+`mode=menu` 的 `ok: true` **只表示 PC 侧调用成功**，不读日志确认，手机没收到也会报
+成功（已实测）。这个模式下只能说「已发起」，不能说「已送达」。
 
-## Legacy paths
+## Fallback
 
-代码保留在 `midrop_cli/core/noui.py` / `core/send_rpa.py`，研究脚本在 `tools/frida_*.py`。  
-强制旧路径：`midrop send PATH --mode noui|rpa` 或 `midrop config set send_mode noui|rpa`。
+代码在 `midrop_cli/core/menu.py`，研究脚本在 `tools/frida_*.py`。  
+切兜底：`midrop send PATH --mode menu` 或 `midrop config set send_mode menu`。

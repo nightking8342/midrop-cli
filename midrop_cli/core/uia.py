@@ -1,18 +1,28 @@
 # -*- coding: utf-8 -*-
-"""UIA helpers: list MiDrop devices and click a target by keyword."""
+"""
+UIA device listing, behind ``midrop devices --source uia``.
+
+Legacy: opens the real picker with a probe file and scrapes display names, so
+it flashes a window and yields names only — no device ids. ``--source live``
+(reading the manager's own log) supersedes it for every normal use; this
+remains only as a cross-check when the log snapshot looks stale.
+
+The UIA *click* path was deleted along with the rpa send mode.
+"""
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import time
 from typing import Any
 
-from midrop_cli.core.popup import ensure_dpi_aware
+from midrop_cli.core.launch import trigger_dropfile
+from midrop_cli.core.mapping import hold_mapping
+from midrop_cli.core.popup import close_popup, ensure_dpi_aware, find_popup
 
-_FOUND_RE = re.compile(
-    r"FOUND\s+name=(?P<name>.*?)\s+click=\((?P<x>-?\d+)\s*,\s*(?P<y>-?\d+)\)"
-)
+EXIT_OK = 0
+EXIT_ENV = 2
+EXIT_TIMEOUT = 3
 
 # PowerShell: enumerate device TextBlocks under XiaomiPcManager popup
 _UIA_LIST = r"""
@@ -40,65 +50,6 @@ foreach ($w in $wins) {
   }
 }
 """
-
-# PowerShell: find device TextBlock by keyword and click center (physical pixels)
-_UIA_CLICK = r"""
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class MidropMouse {
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-  [DllImport("shcore.dll")] public static extern int SetProcessDpiAwareness(int v);
-  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-  public const uint LEFTDOWN=0x0002, LEFTUP=0x0004;
-}
-"@
-try { [void][MidropMouse]::SetProcessDpiAwareness(2) } catch {
-  try { [void][MidropMouse]::SetProcessDPIAware() } catch {}
-}
-$keyword = $env:MIDROP_DEVICE
-$pidMi = (Get-Process XiaomiPcManager -ErrorAction SilentlyContinue | Select-Object -First 1).Id
-if (-not $pidMi) { Write-Output "NO_PROC"; exit 2 }
-$root = [System.Windows.Automation.AutomationElement]::RootElement
-$pcond = New-Object System.Windows.Automation.PropertyCondition(
-  [System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$pidMi)
-$wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $pcond)
-$target = $null
-$winHwnd = [IntPtr]::Zero
-foreach ($w in $wins) {
-  $b = $w.Current.BoundingRectangle
-  if ($b.Width -lt 200 -or $b.Height -lt 250 -or $b.Width -gt 700) { continue }
-  $all = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-    [System.Windows.Automation.Condition]::TrueCondition)
-  foreach ($e in $all) {
-    $n = $e.Current.Name
-    if ($n -and ($n -like "*$keyword*")) {
-      $target = $e
-      $winHwnd = [IntPtr]$w.Current.NativeWindowHandle
-      break
-    }
-  }
-  if ($target) { break }
-}
-if (-not $target) { Write-Output "NOT_FOUND"; exit 3 }
-$r = $target.Current.BoundingRectangle
-$cx = [int]($r.X + $r.Width/2)
-$cy = [int]($r.Y + $r.Height/2)
-Write-Output ("FOUND name={0} click=({1},{2})" -f $target.Current.Name, $cx, $cy)
-if ($winHwnd -ne [IntPtr]::Zero) { [void][MidropMouse]::SetForegroundWindow($winHwnd) }
-Start-Sleep -Milliseconds 300
-[void][MidropMouse]::SetCursorPos($cx, $cy)
-Start-Sleep -Milliseconds 80
-[MidropMouse]::mouse_event([MidropMouse]::LEFTDOWN,0,0,0,[UIntPtr]::Zero)
-Start-Sleep -Milliseconds 50
-[MidropMouse]::mouse_event([MidropMouse]::LEFTUP,0,0,0,[UIntPtr]::Zero)
-Write-Output "CLICKED"
-"""
-
 
 def _decode_ps(data: bytes) -> str:
     """Decode PowerShell capture; console often emits system ANSI (GBK on zh-CN)."""
@@ -159,14 +110,6 @@ def _parse_device_lines(out: str) -> list[str]:
     return names
 
 
-def _parse_found(out: str) -> tuple[str, list[int]] | None:
-    for line in out.splitlines():
-        m = _FOUND_RE.search(line.strip())
-        if m:
-            return m.group("name"), [int(m.group("x")), int(m.group("y"))]
-    return None
-
-
 def _list_once() -> tuple[str | None, list[str]]:
     """Single UIA list pass. Returns (error|None, devices).
 
@@ -197,74 +140,86 @@ def list_devices(timeout: float = 12.0) -> list[str]:
         time.sleep(0.4)
 
 
-def click_device(keyword: str, timeout: float = 12.0) -> dict[str, Any]:
-    """Find and click a device whose Name contains *keyword*.
+def _elapsed_ms(t0: float) -> int:
+    return int((time.time() - t0) * 1000)
 
-    Success: ``{"ok": True, "name": "...", "click": [x, y]}``
-    Failure: ``{"ok": False, "error": ..., "candidates": [...], "message": "..."}``
-    """
+
+def list_devices_flow(
+    timeout: float = 12.0,
+    launch_path: str = "",
+) -> dict[str, Any]:
+    """Open picker with a probe file, list devices, then close the popup."""
+    t0 = time.time()
     ensure_dpi_aware()
-    kw = (keyword or "").strip()
-    if not kw:
+    close_popup()
+
+    temp_dir = os.environ.get("TEMP") or os.environ.get("TMP") or os.getcwd()
+    probe = os.path.join(temp_dir, "midrop-devices-probe.txt")
+    try:
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("midrop devices probe\n")
+    except OSError as e:
         return {
             "ok": False,
-            "error": "device_not_found",
-            "candidates": [],
-            "message": "empty device keyword",
+            "action": "devices",
+            "devices": [],
+            "error": "environment",
+            "message": f"cannot write probe file: {e}",
+            "elapsed_ms": _elapsed_ms(t0),
+            "exit_code": EXIT_ENV,
         }
 
-    deadline = time.time() + max(0.0, float(timeout))
-    saw_no_proc = False
-    last_out = ""
+    try:
+        with hold_mapping(probe):
+            try:
+                trigger_dropfile(launch_path)
+            except FileNotFoundError:
+                close_popup()
+                return {
+                    "ok": False,
+                    "action": "devices",
+                    "devices": [],
+                    "error": "environment",
+                    "message": f"Launch.exe not found: {launch_path}",
+                    "elapsed_ms": _elapsed_ms(t0),
+                    "exit_code": EXIT_ENV,
+                }
 
-    while time.time() < deadline:
-        _code, out = _run_ps(_UIA_CLICK, env={"MIDROP_DEVICE": kw})
-        last_out = out.strip()
-        if "CLICKED" in out:
-            parsed = _parse_found(out)
-            if parsed:
-                name, click = parsed
-                return {"ok": True, "name": name, "click": click}
-            # Clicked but FOUND line missing/unparseable
+            names = list_devices(timeout=float(timeout))
+            had_popup = find_popup() is not None
+            close_popup()
+
+            if not names:
+                err = "popup_timeout" if not had_popup else "device_not_found"
+                return {
+                    "ok": False,
+                    "action": "devices",
+                    "devices": [],
+                    "error": err,
+                    "message": (
+                        f"no devices within {timeout}s"
+                        if err == "device_not_found"
+                        else f"popup not found / no devices within {timeout}s"
+                    ),
+                    "elapsed_ms": _elapsed_ms(t0),
+                    "exit_code": EXIT_TIMEOUT,
+                }
+
             return {
-                "ok": False,
-                "error": "click_failed",
-                "candidates": [],
-                "message": f"clicked but could not parse FOUND line: {last_out}",
+                "ok": True,
+                "action": "devices",
+                "devices": [{"name": n} for n in names],
+                "elapsed_ms": _elapsed_ms(t0),
+                "exit_code": EXIT_OK,
             }
-        if "NO_PROC" in out:
-            saw_no_proc = True
-            time.sleep(0.4)
-            continue
-        if "NOT_FOUND" in out:
-            saw_no_proc = False
-            time.sleep(0.4)
-            continue
-        # Unexpected output — brief backoff then retry
-        time.sleep(0.4)
-
-    # Timed out: gather candidates for diagnostics
-    err, candidates = _list_once()
-    if err == "no_proc" and saw_no_proc:
+    except OSError as e:
+        close_popup()
         return {
             "ok": False,
-            "error": "no_proc",
-            "candidates": [],
-            "message": "XiaomiPcManager process not running",
+            "action": "devices",
+            "devices": [],
+            "error": "environment",
+            "message": str(e),
+            "elapsed_ms": _elapsed_ms(t0),
+            "exit_code": EXIT_ENV,
         }
-    if err == "no_proc" and not candidates:
-        # Ended with no process and never saw a successful scan
-        if saw_no_proc:
-            return {
-                "ok": False,
-                "error": "no_proc",
-                "candidates": [],
-                "message": "XiaomiPcManager process not running",
-            }
-
-    return {
-        "ok": False,
-        "error": "device_not_found",
-        "candidates": candidates,
-        "message": f"no device matching keyword {kw!r} within {timeout}s",
-    }

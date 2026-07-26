@@ -57,10 +57,40 @@ def test_send_device_required(conf_env, capsys, tmp_path):
 
 def test_config_send_mode(conf_env, capsys):
     cli = conf_env
-    code = cli.main(["config", "set", "send_mode", "rpa", "--format", "json"])
+    code = cli.main(["config", "set", "send_mode", "menu", "--format", "json"])
     assert code == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["value"] == "rpa"
+    assert out["value"] == "menu"
     code = cli.main(["config", "get", "send_mode", "--format", "json"])
     assert code == 0
-    assert json.loads(capsys.readouterr().out)["value"] == "rpa"
+    assert json.loads(capsys.readouterr().out)["value"] == "menu"
+
+
+def test_config_send_mode_defaults_to_silent(conf_env, capsys):
+    cli = conf_env
+    assert cli.main(["config", "get", "send_mode", "--format", "json"]) == 0
+    assert json.loads(capsys.readouterr().out)["value"] == "silent"
+
+
+def test_config_send_mode_migrates_noui_to_menu(conf_env, capsys):
+    """Existing configs saying noui keep working, under the new name."""
+    cli = conf_env
+    assert cli.main(["config", "set", "send_mode", "noui", "--format", "json"]) == 0
+    assert json.loads(capsys.readouterr().out)["value"] == "menu"
+
+
+def test_config_send_mode_rejects_removed_rpa(conf_env, capsys):
+    """rpa was deleted; setting it explicitly must fail loudly, not silently pick silent."""
+    cli = conf_env
+    code = cli.main(["config", "set", "send_mode", "bogus", "--format", "json"])
+    assert code == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False
+
+
+def test_send_rejects_removed_rpa_mode(conf_env, capsys, tmp_path):
+    cli = conf_env
+    f = tmp_path / "a.txt"
+    f.write_text("x", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        cli.main(["send", str(f), "--device", "Fold", "--mode", "rpa", "--format", "json"])

@@ -445,7 +445,7 @@ def send_file_silent(
             "error": "environment",
             "message": (
                 "no UI thread found in XiaomiPcManager; "
-                "open the manager window once, or use --mode noui"
+                "open the manager window once, or use --mode menu"
             ),
             "elapsed_ms": _elapsed_ms(t0),
             "exit_code": EXIT_ENV,

@@ -37,10 +37,13 @@ def emit(data: dict[str, Any], fmt: str) -> None:
             parts = [f"[ok] send {data.get('file', '')}"]
             if data.get("device_matched"):
                 parts.append(f"device={data['device_matched']}")
-            if data.get("clicked") is True:
-                parts.append("clicked")
-            elif data.get("clicked") is False:
-                parts.append("no-click")
+            if data.get("mode"):
+                parts.append(f"mode={data['mode']}")
+            # silent confirms delivery from the manager log; menu cannot
+            if data.get("confirmed") is True:
+                parts.append(f"confirmed=task {data.get('task_id')}")
+            elif data.get("confirmed") is False:
+                parts.append("unconfirmed")
             _safe_print(" ".join(parts))
             if data.get("note"):
                 _safe_print(str(data["note"]))

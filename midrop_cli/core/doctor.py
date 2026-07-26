@@ -54,28 +54,28 @@ def _check_uia() -> tuple[str, str]:
 
 def run_doctor(cfg_data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Run environment checks. ``ok`` means the check ran; ``healthy`` means criticals pass."""
+    from midrop_cli.core.send import normalize_mode
+
     data = dict(cfg_data) if cfg_data is not None else cfg.load()
+    mode = normalize_mode(data.get("send_mode"))
     checks: list[dict[str, str]] = []
 
     launch_path = str(data.get("launch_path") or "")
-    if launch_path and os.path.isfile(launch_path):
-        checks.append(
-            {
-                "name": "launch_path",
-                "status": "ok",
-                "detail": launch_path,
-            }
-        )
-        launch_ok = True
+    launch_ok = bool(launch_path) and os.path.isfile(launch_path)
+    if launch_ok:
+        checks.append({"name": "launch_path", "status": "ok", "detail": launch_path})
     else:
+        # silent never shells out to Launch.exe; only menu needs it
         checks.append(
             {
                 "name": "launch_path",
-                "status": "fail",
-                "detail": f"not found: {launch_path or '(empty)'}",
+                "status": "fail" if mode == "menu" else "warn",
+                "detail": (
+                    f"not found: {launch_path or '(empty)'}"
+                    + ("" if mode == "menu" else " (only needed by --mode menu)")
+                ),
             }
         )
-        launch_ok = False
 
     pid = pid_of(_PROC_NAME)
     if pid:
@@ -117,12 +117,10 @@ def run_doctor(cfg_data: dict[str, Any] | None = None) -> dict[str, Any]:
 
     uia_status, uia_detail = _check_uia()
     checks.append({"name": "uia", "status": uia_status, "detail": uia_detail})
-    # UIA only required for rpa / devices; noui uses Frida
-    uia_ok = uia_status == "ok"
 
-    # Frida (required for default noui mode)
+    # Frida: required by both send modes
     try:
-        from midrop_cli.core.noui import frida_available
+        from midrop_cli.core.silent import frida_available
 
         frida_ok, frida_detail = frida_available()
     except Exception as e:
@@ -135,7 +133,6 @@ def run_doctor(cfg_data: dict[str, Any] | None = None) -> dict[str, Any]:
         }
     )
 
-    mode = str(data.get("send_mode") or "noui").lower()
     checks.append(
         {
             "name": "send_mode",
@@ -153,11 +150,9 @@ def run_doctor(cfg_data: dict[str, Any] | None = None) -> dict[str, Any]:
         }
     )
 
-    if mode == "rpa":
-        healthy = launch_ok and process_ok and uia_ok
-    else:
-        # noui default
-        healthy = launch_ok and process_ok and frida_ok
+    # silent needs only the manager + Frida; menu additionally shells out to Launch.exe.
+    # UIA is never critical now — it backs `devices --source uia` alone.
+    healthy = process_ok and frida_ok and (launch_ok or mode != "menu")
     return {
         "ok": True,
         "action": "doctor",

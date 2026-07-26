@@ -1,13 +1,30 @@
 # -*- coding: utf-8 -*-
-"""Send dispatcher: default silent, optional noui / rpa fallbacks."""
+"""Send dispatcher: default silent, menu as fallback."""
 from __future__ import annotations
 
 from typing import Any
 
-from midrop_cli.core.send_rpa import list_devices_flow, send_file_rpa
+__all__ = ["send_file", "normalize_mode", "resolve_mode", "MODES", "ALIASES"]
 
-# re-export for devices command
-__all__ = ["send_file", "list_devices_flow", "send_file_rpa"]
+MODES = ("silent", "menu")
+
+# Historical names. ``noui`` predates silent, when "no UI" meant "we never click
+# the picker" — it still flashes the window, so it is now called ``menu``.
+# ``rpa``/``ui``/``legacy`` was the UIA-click path, deleted entirely; those
+# configs fall forward to silent rather than erroring on load.
+ALIASES = {"noui": "menu", "rpa": "silent", "ui": "silent", "legacy": "silent"}
+
+
+def resolve_mode(mode: str | None) -> str | None:
+    """Map a mode name (or historical alias) onto a supported one, else None."""
+    m = (mode or "").strip().lower()
+    m = ALIASES.get(m, m)
+    return m if m in MODES else None
+
+
+def normalize_mode(mode: str | None) -> str:
+    """Like :func:`resolve_mode` but falls back to silent instead of None."""
+    return resolve_mode(mode) or "silent"
 
 
 def send_file(
@@ -15,7 +32,6 @@ def send_file(
     device_query: str,
     timeout: float = 12.0,
     hold: float = 8.0,
-    no_click: bool = False,
     launch_path: str = "",
     mode: str = "silent",
     cfg_data: dict[str, Any] | None = None,
@@ -27,27 +43,12 @@ def send_file(
 
     mode:
       - silent (default): Frida on the UI-thread message pump; no popup at all
-      - noui: Frida via OpenFromMenuWindow; briefly shows the picker
-      - rpa: legacy popup + UIA click
-    no_click only applies to rpa (forces picker-only).
+      - menu: Frida via OpenFromMenuWindow; flashes the picker. Fallback only.
     """
-    m = (mode or "silent").strip().lower()
+    if normalize_mode(mode) == "menu":
+        import midrop_cli.core.menu as menu_mod
 
-    if m in ("rpa", "ui", "legacy"):
-        return send_file_rpa(
-            path,
-            device_query=device_query,
-            timeout=timeout,
-            hold=hold,
-            no_click=no_click,
-            launch_path=launch_path,
-        )
-
-    if m == "noui":
-        # noui ignores no_click (never clicks)
-        import midrop_cli.core.noui as noui_mod
-
-        return noui_mod.send_file_noui(
+        return menu_mod.send_file_menu(
             path,
             device_query=device_query,
             timeout=timeout,

@@ -8,7 +8,7 @@
 
 - **发送**：进程内直调管家的 `HandleCreateSendTask`（Frida，可锁屏，**默认全程无弹窗**）
 - **列设备**：读管家自己写的日志 `current lyra devices [...]`（无注入、无弹窗、~40ms）
-- **兜底**：保留旧 RPA（弹窗 + UIA 点设备）作为 `--mode rpa`
+- **兜底**：`--mode menu`（借菜单窗口进 UI 线程，会闪弹窗）
 
 面向 Windows + Xiaomi PC Manager 5.5.x + Python 3.10+。
 
@@ -25,13 +25,12 @@ midrop-cli/
     core/
       mapping.py                   共享内存 Local\MiDropFileMappingObject
       launch.py                    Launch.exe --contextmenu_dropfile=1
-      popup.py                     枚举/关闭互传弹窗（RPA 用）
-      uia.py                       UIA 列/点设备（RPA 用）
+      popup.py                     枚举/关闭互传弹窗；pid_of
+      uia.py                       UIA 列设备（仅 devices --source uia）
       devices.py                   别名→device_id 映射（Fold/Pad）
       silent.py                    Frida 挂 UI 线程消息泵，零弹窗（默认发送路径）
-      noui.py                      Frida 借菜单窗口进 UI 线程（会闪弹窗，保留可切）
-      send_rpa.py                  旧 RPA 发送（保留可切）
-      send.py                      按 --mode 分发到 silent / noui / rpa
+      menu.py                      Frida 借菜单窗口进 UI 线程（会闪弹窗，兜底）
+      send.py                      按 --mode 分发到 silent / menu；含模式名归一
       live_devices.py              纯读日志的设备列表
       doctor.py                    环境检查（含 frida）
   tools/                           研究/挂钩脚本（frida_*.py），不进 CLI
@@ -44,7 +43,7 @@ midrop-cli/
 
 | 命令 | 说明 |
 |------|------|
-| `midrop send <path> [--device Fold\|Pad\|0xHEX] [--mode silent\|noui\|rpa] [--timeout SEC] [--hold SEC] [--retry N] [--no-confirm] [--no-click]` | 发送文件（默认 silent） |
+| `midrop send <path> [--device Fold\|Pad\|0xHEX] [--mode silent\|menu] [--timeout SEC] [--hold SEC] [--retry N] [--no-confirm]` | 发送文件（默认 silent） |
 | `midrop devices [--source live\|uia] [--timeout SEC]` | 列设备（默认 live=读日志） |
 | `midrop doctor` | 检查 Launch.exe、管家进程、Frida、UIA、配置 |
 | `midrop config path \| list \| get KEY \| set KEY VALUE` | 配置读写 |
@@ -66,7 +65,7 @@ midrop-cli/
 | Key | 默认 | 说明 |
 |-----|------|------|
 | `default_device` | 空 | 别名或十六进制 |
-| `send_mode` | `silent` | `silent` \| `noui` \| `rpa` |
+| `send_mode` | `silent` | `silent` \| `menu`（旧值 `noui`→menu，`rpa`→silent） |
 | `launch_path` | 管家 Launch.exe | |
 | `hold_seconds` | 8 | 发送后保持映射秒数 |
 | `device_map` | 空 | JSON 对象，别名→id 覆盖默认表 |
@@ -86,7 +85,7 @@ midrop-cli/
 
 设备 ID（本机实测，别处不同）：Fold=`0xD16E4A0F`、Pad=`0x347FBBC5`。别人机器需要重录。
 
-## 发送三条路径
+## 发送两条路径
 
 ### silent（默认）— `core/silent.py`
 
@@ -110,15 +109,28 @@ UI 线程号**运行时探测**（`pick_ui_thread`：枚举管家窗口，取拥
 2026-07-27 实测：Pad 4.3s 送达，日志链 `kWaitReceive → kConnecting → kFileSending →
 kDone → OnTaskSucceed` 完整。
 
-### noui（保留）— `core/noui.py`
+### menu（兜底）— `core/menu.py`
 
 写共享内存 + `Launch.exe --contextmenu_dropfile=1` → hook `OpenFromMenuWindow` 的
-onLeave → 在 UI 线程调 CreateSend。**会闪一下设备弹窗**，且比 silent 慢（多一次
-Launch 往返）。silent 若因管家升级挂掉，用它兜底。
+onLeave → 在 UI 线程调 CreateSend。**会闪一下设备弹窗**，且比 silent 慢一倍
+（实测 9.7s vs 4.6s，多一次 Launch 往返）。silent 若因管家升级挂掉，用它兜底。
 
-### rpa（保留）— `core/send_rpa.py`
+**这个模式原名 `noui`**。当时「no UI」指的是「不去点弹窗」，但它照样弹窗；silent
+出现后这名字彻底误导，故改名 `menu`（借 menu window 进 UI 线程）。`--mode noui`
+仍作废弃别名接受，输出里一律报 `menu`。
 
-弹窗 + UIA 点设备。锁屏易假成功，作最后兜底。
+### 已删除：rpa
+
+弹窗 + UIA 点设备的老路径（`core/send_rpa.py` + `uia.click_device`）**已删除**。
+锁屏下会假成功，silent/menu 两条路都比它可靠。`--mode rpa` 现在直接报参数错误；
+配置里残留的 `send_mode: rpa` 会自动落到 silent（`core/send.py: ALIASES`）。
+
+UIA 只剩 `devices --source uia` 在用（`core/uia.py`），跟发送无关。
+
+## 模式名归一
+
+`core/send.py` 的 `resolve_mode` / `normalize_mode` 是唯一的模式名入口，config 和
+CLI 都走它。加新模式或再改名时只动 `MODES` / `ALIASES`，别在各处散写字符串比较。
 
 ## 手机休眠：与路径无关的失败
 
@@ -126,14 +138,14 @@ Launch 往返）。silent 若因管家升级挂掉，用它兜底。
 `OnChannelCreateFailed err_code=15033 "logical conn remote confirm timeout"`
 （或 `15006 logical conn timeout`）失败，任务 `error 404`。
 
-**这不是 silent 的问题** —— 2026-07-27 实测同一时刻 noui 路径同样失败。失败那次会把
+**这不是 silent 的问题** —— 2026-07-27 实测同一时刻 menu 路径同样失败。失败那次会把
 手机唤醒，所以 silent 默认 `--retry 1` 再打一次。手机睡得深时两次都可能失败，属预期。
 
-排查时务必做对照：`--mode noui` 也失败 = 手机的锅，不是代码回归。
+排查时务必做对照：`--mode menu` 也失败 = 手机的锅，不是代码回归。
 
 ## 成功判据：只认日志
 
-`HandleCreateSendTask` 调用返回**不代表文件送到了**。老的 noui 路径就会在手机没收到时
+`HandleCreateSendTask` 调用返回**不代表文件送到了**。menu 路径至今如此：手机没收到也
 照样报 `ok: True` / exit 0（已实测）。
 
 silent 路径改为读 `smart_share_log.txt` 找 `OnTaskSucceed task_id N` 才算成功，返回
@@ -157,13 +169,14 @@ silent 路径改为读 `smart_share_log.txt` 找 `OnTaskSucceed task_id N` 才�
 ## 开发约定
 
 1. **不要**再实现堆扫描或 daemon 版设备列表（前面证明不可靠或过重）。
-2. **不要**把 send 默认切回 rpa 或 noui；silent 已实测可靠、更快且零弹窗。
-3. **不要**硬编码 UI 线程号；管家重启即变，必须走 `silent.pick_ui_thread` 运行时探测。
-4. **不要**把「CreateSend 返回了」当成功；只认日志里的 `OnTaskSucceed`。
-5. RVA 若不匹配（管家升级），改 `core/silent.py` 的 `CREATE_SEND_RVA`（noui 还需 `OPEN_MENU_RVA`）；重新逆向方法见 `docs/research-backend-api.md`。
-6. 中文输出必经 `output.emit()`；直接 `print()` 中文在 GBK 控制台会崩。
-7. 新逻辑先写测试再写实现；`PYTHONPATH=. python -m pytest tests/ -q` 全绿再提。
-8. Agent 使用契约在 `skill/`，改 CLI 记得同步。
+2. **不要**把 send 默认切回 menu；silent 已实测可靠、快一倍且零弹窗。
+3. **不要**重新引入 RPA/UIA 点击发送（锁屏假成功，已删）。
+4. **不要**硬编码 UI 线程号；管家重启即变，必须走 `silent.pick_ui_thread` 运行时探测。
+5. **不要**把「CreateSend 返回了」当成功；只认日志里的 `OnTaskSucceed`。
+6. RVA 若不匹配（管家升级），改 `core/silent.py` 的 `CREATE_SEND_RVA`（menu 还需 `OPEN_MENU_RVA`）；重新逆向方法见 `docs/research-backend-api.md`。
+7. 中文输出必经 `output.emit()`；直接 `print()` 中文在 GBK 控制台会崩。
+8. 新逻辑先写测试再写实现；`PYTHONPATH=. python -m pytest tests/ -q` 全绿再提。
+9. Agent 使用契约在 `skill/`，改 CLI 记得同步。
 
 ## Skill 与外部关系
 
@@ -176,7 +189,7 @@ silent 路径改为读 `smart_share_log.txt` 找 `OnTaskSucceed task_id N` 才�
 - **调试发送**：`midrop send FILE --device Fold --format json`；失败看 exit + logs
 - **看设备**：`midrop devices --format json`；关注 `snapshot_age_sec`
 - **换手机/换机器**：抓一次真实 `HandleCreateSendTask` 日志（`smart_share_log.txt`）拿新 `device_id`，写入 `config.device_map`
-- **管家升级挂了**：跑 `midrop doctor`；若 send/noui 报访问违规，八成 RVA 变了，重新逆向
+- **管家升级挂了**：跑 `midrop doctor`；若 send 报访问违规，八成 RVA 变了，重新逆向
 
 ## 已知不做
 

@@ -1,6 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-No-UI MiDrop send: FileMapping + Launch + Frida UI-thread HandleCreateSendTask.
+Menu-window MiDrop send: FileMapping + Launch + Frida UI-thread CreateSend.
+
+Staged fallback for ``core/silent.py``. Reaches the manager's UI thread by
+triggering the real context-menu flow and hooking ``OpenFromMenuWindow``, so
+the device picker **does flash on screen** — it was called ``noui`` back when
+"no UI" meant "we never click the picker", which stopped being a useful
+distinction once silent removed the window entirely.
+
+Prefer silent. Use this only when silent breaks (e.g. the manager changes how
+its UI thread pumps messages).
 
 Requires: frida package, XiaomiPcManager running, version-matched RVAs.
 """
@@ -17,7 +26,7 @@ from midrop_cli.core.launch import trigger_dropfile
 from midrop_cli.core.mapping import hold_mapping
 from midrop_cli.core.popup import pid_of
 
-NOTE = "PC 侧已发起（noui）；若手机需确认接收请在手机上同意"
+NOTE = "PC 侧已发起（menu）；若手机需确认接收请在手机上同意"
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -214,7 +223,7 @@ def frida_available() -> tuple[bool, str]:
         return False, str(e)
 
 
-def send_file_noui(
+def send_file_menu(
     path: str,
     device_query: str,
     timeout: float = 25.0,
@@ -222,12 +231,12 @@ def send_file_noui(
     launch_path: str = "",
     cfg_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Send via Frida UI-thread CreateSend. No UIA click."""
+    """Send via Frida UI-thread CreateSend. Flashes the picker; never clicks it."""
     t0 = time.time()
     path = os.path.abspath(path)
     base: dict[str, Any] = {
         "action": "send",
-        "mode": "noui",
+        "mode": "menu",
         "file": path,
         "device_query": device_query,
         "popup_found": False,
@@ -365,7 +374,7 @@ def send_file_noui(
             **base,
             "ok": False,
             "error": "environment",
-            "message": f"noui failed: {e}",
+            "message": f"menu send failed: {e}",
             "elapsed_ms": _elapsed_ms(t0),
             "exit_code": EXIT_ENV,
         }
@@ -381,7 +390,7 @@ def send_file_noui(
             "ok": True,
             "popup_found": True,
             "clicked": False,
-            "noui_invoked": True,
+            "menu_invoked": True,
             "elapsed_ms": _elapsed_ms(t0),
             "note": NOTE,
             "exit_code": EXIT_OK,

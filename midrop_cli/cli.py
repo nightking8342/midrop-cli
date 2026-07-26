@@ -30,11 +30,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--device", default=None, help="alias Fold/Pad, 0xHEX, or decimal id")
     s.add_argument(
         "--mode",
-        choices=("silent", "noui", "rpa"),
+        choices=("silent", "menu", "noui"),
         default=None,
+        metavar="{silent,menu}",
         help=(
             "silent=no popup at all (default); "
-            "noui=Frida via menu window (brief picker); rpa=legacy UIA click"
+            "menu=Frida via menu window, flashes the picker (fallback). "
+            "noui is a deprecated alias for menu"
         ),
     )
     s.add_argument("--timeout", type=float, default=12.0)
@@ -49,11 +51,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-confirm",
         action="store_true",
         help="silent only: return once invoked, without waiting for OnTaskSucceed",
-    )
-    s.add_argument(
-        "--no-click",
-        action="store_true",
-        help="rpa only: show picker without clicking",
     )
 
     d = sub.add_parser(
@@ -175,7 +172,6 @@ def cmd_send(args) -> int:
         device_query=str(device),
         timeout=args.timeout,
         hold=args.hold if args.hold is not None else float(conf["hold_seconds"]),
-        no_click=bool(args.no_click),
         launch_path=conf["launch_path"],
         mode=str(mode),
         cfg_data=conf,
@@ -190,19 +186,19 @@ def cmd_devices(args) -> int:
     source = getattr(args, "source", None) or "live"
     if source == "uia":
         try:
-            from midrop_cli.core import send as send_mod
+            from midrop_cli.core.uia import list_devices_flow
         except ImportError:
             emit(
                 {
                     "ok": False,
                     "action": "devices",
                     "error": "not_implemented",
-                    "message": "core not ready",
+                    "message": "core.uia not ready",
                 },
                 _fmt(args),
             )
             return EXIT_ERROR
-        result = send_mod.list_devices_flow(
+        result = list_devices_flow(
             timeout=args.timeout,
             launch_path=cfg.load()["launch_path"],
         )

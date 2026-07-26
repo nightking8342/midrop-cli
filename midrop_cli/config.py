@@ -19,12 +19,9 @@ DEFAULTS: dict[str, Any] = {
     "default_device": "",
     "launch_path": r"C:\Program Files\MI\XiaomiPCManager\Launch.exe",
     "hold_seconds": 8,
-    "send_mode": "silent",  # silent | noui | rpa
+    "send_mode": "silent",  # silent | menu
     "device_map": "",  # optional JSON object alias->id
 }
-
-# silent: no popup at all; noui: brief picker; rpa: popup + UIA click
-_MODES = ("silent", "noui", "rpa")
 
 
 def config_dir() -> Path:
@@ -54,12 +51,10 @@ def load() -> dict[str, Any]:
         data["hold_seconds"] = DEFAULTS["hold_seconds"]
     if data.get("default_device") is None:
         data["default_device"] = ""
-    mode = str(data.get("send_mode") or "silent").strip().lower()
-    if mode in ("ui", "legacy"):
-        mode = "rpa"
-    if mode not in _MODES:
-        mode = "silent"
-    data["send_mode"] = mode
+    # Old configs may still hold noui/rpa; normalize_mode maps them forward.
+    from midrop_cli.core.send import normalize_mode
+
+    data["send_mode"] = normalize_mode(data.get("send_mode"))
     if data.get("device_map") is None:
         data["device_map"] = ""
     return data
@@ -78,11 +73,11 @@ def set_key(key: str, value: str) -> dict[str, Any]:
     if key == "hold_seconds":
         data[key] = int(value)
     elif key == "send_mode":
-        m = value.strip().lower()
-        if m in ("ui", "legacy"):
-            m = "rpa"
-        if m not in _MODES:
-            raise ValueError("send_mode must be one of: " + ", ".join(_MODES))
+        from midrop_cli.core.send import MODES, resolve_mode
+
+        m = resolve_mode(value)
+        if m is None:
+            raise ValueError("send_mode must be one of: " + ", ".join(MODES))
         data[key] = m
     else:
         data[key] = value
