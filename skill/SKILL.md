@@ -12,6 +12,11 @@ description: 把电脑上的文件通过小米互传（MiDrop）发到小米手�
 - **默认 `noui`**：Frida 进程内调用 `HandleCreateSendTask`（可锁屏；不点 UI）
 - **备选 `rpa`**：弹窗 + UIA 点设备（旧方式；锁屏易假成功）
 
+## 列设备
+
+`midrop devices` 默认读 `smart_share_log.txt` 最后一条 `current lyra devices` 快照。
+返回的 `snapshot_age_sec` 越小越新；数十秒内可信。
+
 ```bash
 midrop send "PATH" --device Fold --format json          # 默认 noui
 midrop send "PATH" --device Pad --mode rpa --format json # 强制旧方式
