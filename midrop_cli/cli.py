@@ -57,6 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="Check environment", parents=[fmt])
 
+    dae = sub.add_parser(
+        "daemon",
+        help="Stay attached to XiaomiPcManager and maintain live device state",
+        parents=[fmt],
+    )
+    dae.add_argument("--refresh", type=float, default=5.0, help="state heartbeat seconds")
+
     c = sub.add_parser("config", help="Manage config", parents=[fmt])
     csub = c.add_subparsers(dest="config_op", required=True)
     csub.add_parser("path", parents=[fmt])
@@ -207,7 +214,7 @@ def cmd_devices(args) -> int:
                 _fmt(args),
             )
             return EXIT_ERROR
-        result = list_devices_live(timeout=args.timeout, cfg_data=cfg.load())
+        result = list_devices_live(timeout=args.timeout)
     emit(result, _fmt(args))
     return int(result.get("exit_code", EXIT_ERROR if not result.get("ok") else EXIT_OK))
 
@@ -223,6 +230,23 @@ def cmd_doctor(args) -> int:
     return EXIT_OK if result.get("ok") and result.get("healthy") else EXIT_ENV
 
 
+def cmd_daemon(args) -> int:
+    try:
+        from midrop_cli.core.daemon import run_daemon
+    except ImportError as e:
+        emit(
+            {
+                "ok": False,
+                "action": "daemon",
+                "error": "environment",
+                "message": f"daemon not ready: {e}",
+            },
+            _fmt(args),
+        )
+        return EXIT_ERROR
+    return run_daemon(refresh_every=float(args.refresh))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -234,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_devices(args)
     if args.command == "doctor":
         return cmd_doctor(args)
+    if args.command == "daemon":
+        return cmd_daemon(args)
     return EXIT_ERROR
 
 
