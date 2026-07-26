@@ -47,12 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="List devices with ids (live) or UIA names",
         parents=[fmt],
     )
-    d.add_argument("--timeout", type=float, default=12.0)
+    d.add_argument("--timeout", type=float, default=5.0)
     d.add_argument(
         "--source",
         choices=("live", "uia"),
         default="live",
-        help="live=Frida in-process ids (default); uia=popup names only",
+        help="live=read smart_share_log's last 'current lyra devices' (default); uia=popup names only",
     )
 
     sub.add_parser("doctor", help="Check environment", parents=[fmt])

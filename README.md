@@ -23,7 +23,7 @@ midrop config set default_device Fold
 | 命令 | 说明 |
 |------|------|
 | `midrop send <path> [--device KW] [--mode noui\|rpa]` | 发送（默认 noui） |
-| `midrop devices [--source live\|uia]` | **默认 live**：读管家日志最后一条 `current lyra devices` 快照，返回 id_hex + device_id + types + snapshot_age_sec；`uia` 走弹窗仅名字 |
+| `midrop devices [--source live\|uia]` | **默认 live**：读管家日志最后一条 `current lyra devices`，返回 id_hex + device_id + types + snapshot_age_sec（无弹窗）；`uia` 走弹窗仅名字 |
 | `midrop doctor` | 环境检查（含 frida） |
 | `midrop config …` | 配置 |
 

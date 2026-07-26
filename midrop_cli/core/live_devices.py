@@ -2,14 +2,15 @@
 """
 Live device enumeration by tailing MiDrop's own online snapshot log line.
 
-Xiaomi PC Manager already writes the authoritative online device set to
+Xiaomi PC Manager writes the authoritative online device set to
 smart_share_log.txt on every add/remove:
 
     [smart_share][device_mgr][lyra] current lyra devices [<HEX>:[types...], ...], ui valid 1
 
-Reading the last such line gives seconds-old truth with no injection, no
-popup, no daemon. If the log line is stale (device state changed after the
-last write) the caller will discover it on the next real interaction.
+Empirically, add/remove events reliably produce this line within a couple
+of seconds. We just read the last such line — no injection, no popup, no
+daemon. ``snapshot_age_sec`` is reported so callers can decide how much
+they trust it.
 """
 from __future__ import annotations
 
@@ -28,8 +29,6 @@ EXIT_TIMEOUT = 3
 DEVICE_LABELS = dict(_CORE_LABELS)
 
 LYRA_LOG = r"C:\ProgramData\MI\AIoT\Log\smart_share_log.txt"
-# Tail window in bytes when reading the log. Large enough to always contain
-# the last 'current lyra devices' entry even in busy periods.
 _TAIL_BYTES = 400_000
 _TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 _ENTRY_RE = re.compile(r"([0-9A-Fa-f]{8}):\[([0-9,\s]*)\]")
@@ -60,7 +59,6 @@ def _parse_line_ts(line: str) -> float | None:
 
 
 def _find_last_snapshot(tail: str) -> tuple[str, float | None] | None:
-    """Return (body_inside_outer_brackets, unix_timestamp) of the last snapshot."""
     last: tuple[str, float | None] | None = None
     for line in tail.splitlines():
         idx = line.find("current lyra devices ")
@@ -90,8 +88,7 @@ def _parse_devices(body: str) -> list[dict[str, Any]]:
     devices: list[dict[str, Any]] = []
     for m in _ENTRY_RE.finditer(body):
         id_hex = m.group(1).upper()
-        types_str = m.group(2)
-        types = [int(x.strip()) for x in types_str.split(",") if x.strip()]
+        types = [int(x.strip()) for x in m.group(2).split(",") if x.strip()]
         did = int(id_hex, 16)
         devices.append(
             {
@@ -107,23 +104,25 @@ def _parse_devices(body: str) -> list[dict[str, Any]]:
 
 def list_devices_live(timeout: float = 5.0) -> dict[str, Any]:
     """
-    Read the last 'current lyra devices [...]' line from smart_share_log.txt
-    and parse it into a live device list.
+    Read the last ``current lyra devices [...]`` entry from smart_share_log.txt.
+    Returns snapshot_age_sec so callers can judge freshness.
     """
     t0 = time.time()
-    if not Path(LYRA_LOG).is_file():
+    log_path = LYRA_LOG
+    if not Path(log_path).is_file():
         return {
             "ok": False,
             "action": "devices",
             "source": "log",
             "devices": [],
             "error": "environment",
-            "message": f"log not found: {LYRA_LOG}",
+            "message": f"log not found: {log_path}",
             "elapsed_ms": _elapsed_ms(t0),
             "exit_code": EXIT_ENV,
         }
+
     try:
-        tail = _read_tail(LYRA_LOG)
+        tail = _read_tail(log_path)
     except OSError as e:
         return {
             "ok": False,
@@ -135,6 +134,7 @@ def list_devices_live(timeout: float = 5.0) -> dict[str, Any]:
             "elapsed_ms": _elapsed_ms(t0),
             "exit_code": EXIT_ENV,
         }
+
     snap = _find_last_snapshot(tail)
     if not snap:
         return {
@@ -143,10 +143,14 @@ def list_devices_live(timeout: float = 5.0) -> dict[str, Any]:
             "source": "log",
             "devices": [],
             "error": "device_not_found",
-            "message": "no 'current lyra devices' entry in log tail",
+            "message": (
+                "no 'current lyra devices' entry in log tail; "
+                "try opening XiaomiPcManager once so it emits a snapshot"
+            ),
             "elapsed_ms": _elapsed_ms(t0),
             "exit_code": EXIT_TIMEOUT,
         }
+
     body, ts = snap
     devices = _parse_devices(body)
     age = round(time.time() - ts, 1) if ts is not None else None

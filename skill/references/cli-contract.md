@@ -31,10 +31,10 @@ Agent 调用请始终加 `--format json`。
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--source live` | 读 smart_share_log.txt 里最后一条 `current lyra devices` 快照，返回 `name` + `id_hex` + `device_id` + `types` + `snapshot_age_sec` | **live** |
+| `--source live` | 读 smart_share_log.txt 里最后一条 `current lyra devices`，返回 `name` + `id_hex` + `device_id` + `types` + `snapshot_age_sec` | **live** |
 | `--source uia` | 弹窗 UIA，仅中文显示名（旧、会闪窗） | |
 
-`live` 无注入、无弹窗；`snapshot_age_sec` 是这条快照的年龄。Xiaomi PC Manager 每次设备上下线都会写入这条日志，因此通常几秒内到几分钟内是新的。
+`live` 无注入、无弹窗、~40ms。管家在设备上下线时会自动写这条日志（可能延迟几秒），因此读到的即为当前在线状态；`snapshot_age_sec` 表示日志年龄，可作参考。
 
 ### `midrop doctor`
 

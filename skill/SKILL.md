@@ -15,7 +15,7 @@ description: 把电脑上的文件通过小米互传（MiDrop）发到小米手�
 ## 列设备
 
 `midrop devices` 默认读 `smart_share_log.txt` 最后一条 `current lyra devices` 快照。
-返回的 `snapshot_age_sec` 越小越新；数十秒内可信。
+无注入、无弹窗、~40ms 返回。管家在设备上下线时会自动写这条日志（可能延迟几秒）。
 
 ```bash
 midrop send "PATH" --device Fold --format json          # 默认 noui
