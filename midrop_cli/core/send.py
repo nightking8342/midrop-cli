@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Send dispatcher: default noui, optional rpa fallback."""
+"""Send dispatcher: default silent, optional noui / rpa fallbacks."""
 from __future__ import annotations
 
 from typing import Any
@@ -17,18 +17,22 @@ def send_file(
     hold: float = 8.0,
     no_click: bool = False,
     launch_path: str = "",
-    mode: str = "noui",
+    mode: str = "silent",
     cfg_data: dict[str, Any] | None = None,
+    retry: int = 1,
+    confirm: bool = True,
 ) -> dict[str, Any]:
     """
     Send file via MiDrop.
 
     mode:
-      - noui (default): Frida UI-thread HandleCreateSendTask
+      - silent (default): Frida on the UI-thread message pump; no popup at all
+      - noui: Frida via OpenFromMenuWindow; briefly shows the picker
       - rpa: legacy popup + UIA click
     no_click only applies to rpa (forces picker-only).
     """
-    m = (mode or "noui").strip().lower()
+    m = (mode or "silent").strip().lower()
+
     if m in ("rpa", "ui", "legacy"):
         return send_file_rpa(
             path,
@@ -38,14 +42,29 @@ def send_file(
             no_click=no_click,
             launch_path=launch_path,
         )
-    # noui ignores no_click (never clicks)
-    from midrop_cli.core.noui import send_file_noui
 
-    return send_file_noui(
+    if m == "noui":
+        # noui ignores no_click (never clicks)
+        import midrop_cli.core.noui as noui_mod
+
+        return noui_mod.send_file_noui(
+            path,
+            device_query=device_query,
+            timeout=timeout,
+            hold=hold,
+            launch_path=launch_path,
+            cfg_data=cfg_data,
+        )
+
+    import midrop_cli.core.silent as silent_mod
+
+    return silent_mod.send_file_silent(
         path,
         device_query=device_query,
         timeout=timeout,
         hold=hold,
         launch_path=launch_path,
         cfg_data=cfg_data,
+        retry=retry,
+        confirm=confirm,
     )

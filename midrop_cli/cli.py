@@ -25,17 +25,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=("json", "text"), default=None)
     sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("send", help="Send file via MiDrop (default: noui)", parents=[fmt])
+    s = sub.add_parser("send", help="Send file via MiDrop (default: silent)", parents=[fmt])
     s.add_argument("path")
     s.add_argument("--device", default=None, help="alias Fold/Pad, 0xHEX, or decimal id")
     s.add_argument(
         "--mode",
-        choices=("noui", "rpa"),
+        choices=("silent", "noui", "rpa"),
         default=None,
-        help="noui=Frida in-process (default); rpa=legacy UIA click",
+        help=(
+            "silent=no popup at all (default); "
+            "noui=Frida via menu window (brief picker); rpa=legacy UIA click"
+        ),
     )
     s.add_argument("--timeout", type=float, default=12.0)
     s.add_argument("--hold", type=float, default=None)
+    s.add_argument(
+        "--retry",
+        type=int,
+        default=1,
+        help="silent only: extra attempts if the phone was asleep (default 1)",
+    )
+    s.add_argument(
+        "--no-confirm",
+        action="store_true",
+        help="silent only: return once invoked, without waiting for OnTaskSucceed",
+    )
     s.add_argument(
         "--no-click",
         action="store_true",
@@ -139,7 +153,7 @@ def cmd_send(args) -> int:
         )
         return EXIT_ERROR
 
-    mode = args.mode if args.mode is not None else conf.get("send_mode") or "noui"
+    mode = args.mode if args.mode is not None else conf.get("send_mode") or "silent"
 
     try:
         from midrop_cli.core import send as send_mod
@@ -165,6 +179,8 @@ def cmd_send(args) -> int:
         launch_path=conf["launch_path"],
         mode=str(mode),
         cfg_data=conf,
+        retry=int(args.retry),
+        confirm=not bool(args.no_confirm),
     )
     emit(result, _fmt(args))
     return int(result.get("exit_code", EXIT_ERROR if not result.get("ok") else EXIT_OK))
