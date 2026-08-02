@@ -17,14 +17,40 @@ if ($parts -notcontains $Root) {
   Write-Host "Already on User PATH: $Root"
 }
 
-# Skill
+# Skill — link rather than copy, so editing skill/ in the repo takes effect at
+# once. A stale copy is worse than no skill: it kept telling agents to pass
+# --mode rpa long after that mode was deleted.
+# Symlink needs admin/developer mode; junction does not, and reads identically.
 $skillSrc = Join-Path $Root "skill"
 $skillDst = Join-Path $env:USERPROFILE ".claude\skills\midrop-cli"
-New-Item -ItemType Directory -Force -Path $skillDst | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $skillDst "references") | Out-Null
-Copy-Item (Join-Path $skillSrc "SKILL.md") (Join-Path $skillDst "SKILL.md") -Force
-Copy-Item (Join-Path $skillSrc "references\cli-contract.md") (Join-Path $skillDst "references\cli-contract.md") -Force
-Write-Host "Skill installed: $skillDst"
+
+$existing = Get-Item $skillDst -Force -ErrorAction SilentlyContinue
+if ($existing) {
+  if ($existing.LinkType) {
+    if ($existing.Target -contains $skillSrc) {
+      Write-Host "Skill already linked: $skillDst -> $skillSrc"
+      $skillDone = $true
+    } else {
+      (Get-Item $skillDst -Force).Delete()
+    }
+  } else {
+    # Plain directory from an older install — keep it aside, don't silently drop it
+    $bak = "$skillDst.bak-copy"
+    if (Test-Path $bak) { Remove-Item $bak -Recurse -Force }
+    Move-Item $skillDst $bak
+    Write-Host "Previous skill copy moved to: $bak"
+  }
+}
+
+if (-not $skillDone) {
+  try {
+    New-Item -ItemType SymbolicLink -Path $skillDst -Target $skillSrc -ErrorAction Stop | Out-Null
+    Write-Host "Skill linked (symlink): $skillDst -> $skillSrc"
+  } catch {
+    New-Item -ItemType Junction -Path $skillDst -Target $skillSrc | Out-Null
+    Write-Host "Skill linked (junction): $skillDst -> $skillSrc"
+  }
+}
 
 Write-Host ""
 Write-Host "Verify (new terminal if PATH just changed):"

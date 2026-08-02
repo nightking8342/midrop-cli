@@ -193,7 +193,10 @@ silent 路径改为读 `smart_share_log.txt` 找 `OnTaskSucceed task_id N` 才�
 ## Skill 与外部关系
 
 - 用户级 skill：`skill/SKILL.md` + `skill/references/cli-contract.md`
-- `install.ps1` 会把 skill 复制到 `%USERPROFILE%\.claude\skills\midrop-cli\`
+- `install.ps1` 把 `%USERPROFILE%\.claude\skills\midrop-cli` **链接**到仓库的 `skill/`
+  （优先 symlink，无管理员权限时退回 junction），所以**改仓库即时生效，不用重装**
+- 2026-08-02 之前是 `Copy-Item` 拷贝，结果 skill 改完忘了重装，Claude Code 读到的
+  contract 停留在三周前 —— 还在教 agent 用早已删除的 `--mode rpa`。**别改回拷贝。**
 - 逆向来源脚本存在 `hiker-rules/getav/tools/midrop_*.py`（已废弃，只作参考）
 
 ## 常见任务
