@@ -113,6 +113,19 @@ silent 下缺失只报 warn）。uia 检查任何模式都不影响 healthy。
 timeout`），**与发送路径无关** —— 同一时刻 `--mode menu` 一样失败。失败那次会唤醒
 设备，故默认 `--retry 1`。两次都失败就让用户点亮屏幕，别连环重试。
 
+### 区分：`confirm_timeout` + logs 只有 `ready`
+
+```json
+{"error": "confirm_timeout",
+ "message": "CreateSend never reached the UI thread pump",
+ "task_id": null, "logs": ["ready", "ready"]}
+```
+
+`task_id: null` + logs 里没有 `CreateSend returned` = **注入侧就没打出去**，
+跟设备无关（设备问题会有 task_id 和 OnTaskFail）。历史成因是 UI 线程阻塞在
+`GetMessageW` 没被叫醒，已由 `poke_thread` 修复；若再次出现，八成是管家升级导致
+RVA 失配，跑 `midrop doctor` 并考虑 `--mode menu` 对照。
+
 ## menu 的 ok 语义不同
 
 `mode=menu` 的 `ok: true` **只表示 PC 侧调用成功**，不读日志确认，手机没收到也会报

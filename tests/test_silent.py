@@ -8,6 +8,7 @@ from midrop_cli.core.silent import (
     _parse_task_id,
     confirm_task_from_log,
     pick_ui_thread,
+    thread_hwnds,
 )
 
 # ---------------------------------------------------------------- task id
@@ -129,3 +130,34 @@ def test_pick_ui_thread_empty():
 def test_pick_ui_thread_single_winui():
     wins = [{"tid": 777, "class": "WinUIDesktopWin32WindowClass", "title": "小米互传"}]
     assert pick_ui_thread(wins) == 777
+
+
+# ------------------------------------------------------- waking the pump
+
+def test_thread_hwnds_filters_by_thread():
+    wins = [
+        {"hwnd": 1, "tid": 100, "class": "WinUIDesktopWin32WindowClass", "title": "a"},
+        {"hwnd": 2, "tid": 100, "class": "XiaomiPCManagerTray", "title": ""},
+        {"hwnd": 3, "tid": 999, "class": "IME", "title": "Default IME"},
+    ]
+    assert thread_hwnds(wins, 100) == [1, 2]
+
+
+def test_thread_hwnds_empty_for_unknown_thread():
+    wins = [{"hwnd": 1, "tid": 100, "class": "X", "title": ""}]
+    assert thread_hwnds(wins, 42) == []
+
+
+def test_pick_ui_thread_still_prefers_real_windows_when_idle():
+    """Regression: an idle manager (no visible MiDrop window) must still resolve."""
+    wins = [
+        {"tid": 7320, "class": "WinUIDesktopWin32WindowClass", "title": "XiaomiPcControlCenterWindow"},
+        {"tid": 7320, "class": "XiaomiPCManager", "title": ""},
+        {"tid": 7320, "class": "XiaomiPCManagerTray", "title": ""},
+        {"tid": 7320, "class": "PowerManage", "title": "PowerManageWindow"},
+        {"tid": 7320, "class": "MSCTFIME UI", "title": "MSCTFIME UI"},
+        {"tid": 2872, "class": "GDI+ Hook Window Class", "title": "GDI+ Window"},
+        {"tid": 10924, "class": ".NET-BroadcastEventWindow.3d893c.0", "title": "x"},
+        {"tid": 21708, "class": "PowerNotificationWindow", "title": ""},
+    ]
+    assert pick_ui_thread(wins) == 7320

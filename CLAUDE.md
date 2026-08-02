@@ -91,7 +91,7 @@ midrop-cli/
 
 ```
 Frida attach → hook user32!GetMessageW，按线程号过滤
-   ↓（管家 UI 线程的常驻消息泵下一次 tick）
+   ↓ 同时不停给该线程 PostMessage(WM_NULL)（关键，见下）
 在该线程调 HandleCreateSendTask(this, device_id, [path], "")
    ↓ 立即 detach
 读 smart_share_log 确认 OnTaskSucceed
@@ -99,15 +99,26 @@ Frida attach → hook user32!GetMessageW，按线程号过滤
 
 **不写共享内存、不调 Launch.exe、不弹任何窗口。**
 
-原理：`OpenFromMenuWindow` 只是碰巧跑在管家 UI 线程上；而那个线程（本机 tid 18956，
-拥有「小米互传」主窗口）本身就有常驻消息泵，管家活着就一直在跑。所以不需要为了拿
-线程上下文而演一遍菜单流程 —— 直接挂消息泵搭车即可。**弹窗从来不是发送的必要条件。**
+原理：`OpenFromMenuWindow` 只是碰巧跑在管家 UI 线程上；直接挂那个线程的消息循环搭车
+即可，不必为了拿线程上下文而演一遍菜单流程。**弹窗从来不是发送的必要条件。**
+
+### 必须主动叫醒 UI 线程（2026-08-02 踩过的坑）
+
+管家空闲缩在托盘时，UI 线程**阻塞在 `GetMessageW` 内部**等消息。hook 挂在函数入口，
+线程不返回就永远不会再进入 —— 表现为 `confirm_timeout` +
+`CreateSend never reached the UI thread pump`，logs 里只有 `ready`。
+
+所以发送期间必须持续 `PostMessageW(hwnd, WM_NULL)` + `PostThreadMessageW(tid, WM_NULL)`
+把它叫醒（`poke_thread`，每 150ms 一次）。实测对照：不 poke 15 秒无反应，poke 后
+0.2 秒触发。
+
+**这是最初版本的设计缺陷**：当时逆向时「小米互传」窗口开着，UI 线程被动画/定时器
+持续驱动，所以「被动等 tick」碰巧能用；管家一旦闲下来就必然超时。别再把 poke 删掉。
 
 UI 线程号**运行时探测**（`pick_ui_thread`：枚举管家窗口，取拥有最多非辅助类窗口的线程），
-不要硬编码 —— 每次重启管家都会变。
+不要硬编码 —— 每次重启管家都会变（实测 18956 → 7320）。
 
-2026-07-27 实测：Pad 4.3s 送达，日志链 `kWaitReceive → kConnecting → kFileSending →
-kDone → OnTaskSucceed` 完整。
+2026-08-02 实测（管家托盘空闲）：Pad 2.9~3.9s 送达，连续三次成功。
 
 ### menu（兜底）— `core/menu.py`
 
@@ -172,11 +183,12 @@ silent 路径改为读 `smart_share_log.txt` 找 `OnTaskSucceed task_id N` 才�
 2. **不要**把 send 默认切回 menu；silent 已实测可靠、快一倍且零弹窗。
 3. **不要**重新引入 RPA/UIA 点击发送（锁屏假成功，已删）。
 4. **不要**硬编码 UI 线程号；管家重启即变，必须走 `silent.pick_ui_thread` 运行时探测。
-5. **不要**把「CreateSend 返回了」当成功；只认日志里的 `OnTaskSucceed`。
-6. RVA 若不匹配（管家升级），改 `core/silent.py` 的 `CREATE_SEND_RVA`（menu 还需 `OPEN_MENU_RVA`）；重新逆向方法见 `docs/research-backend-api.md`。
-7. 中文输出必经 `output.emit()`；直接 `print()` 中文在 GBK 控制台会崩。
-8. 新逻辑先写测试再写实现；`PYTHONPATH=. python -m pytest tests/ -q` 全绿再提。
-9. Agent 使用契约在 `skill/`，改 CLI 记得同步。
+5. **不要**删掉 `silent.poke_thread`；空闲管家的 UI 线程阻塞在 `GetMessageW` 里，不叫醒就必然超时。
+6. **不要**把「CreateSend 返回了」当成功；只认日志里的 `OnTaskSucceed`。
+7. RVA 若不匹配（管家升级），改 `core/silent.py` 的 `CREATE_SEND_RVA`（menu 还需 `OPEN_MENU_RVA`）；重新逆向方法见 `docs/research-backend-api.md`。
+8. 中文输出必经 `output.emit()`；直接 `print()` 中文在 GBK 控制台会崩。
+9. 新逻辑先写测试再写实现；`PYTHONPATH=. python -m pytest tests/ -q` 全绿再提。
+10. Agent 使用契约在 `skill/`，改 CLI 记得同步。
 
 ## Skill 与外部关系
 

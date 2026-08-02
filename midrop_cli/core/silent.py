@@ -3,12 +3,14 @@
 Silent MiDrop send: no shared memory, no Launch.exe, no popup.
 
 ``OpenFromMenuWindow`` (the trigger the older ``noui`` path borrows) merely runs
-on the manager's UI thread — that same thread already owns a permanent message
-pump. So instead of staging a menu flow just to reach it, we hook
-``user32!GetMessageW``, wait until it ticks on that thread, and call
-``HandleCreateSendTask`` right there. Verified on 5.5.0.18: identical log chain
-(task created -> [lyra]kSend -> CreateChannel -> kFileSending -> OnTaskSucceed)
-with no window ever shown.
+on the manager's UI thread, which also owns a message loop. So instead of staging
+a menu flow just to reach it, we hook ``user32!GetMessageW``, poke that thread so
+its loop takes another lap, and call ``HandleCreateSendTask`` when the hook fires.
+
+The poke is not optional: an idle manager parks *inside* ``GetMessageW``, and a
+hook on the function's entry cannot run until something makes it return. Early
+versions omitted it and worked only while a MiDrop window happened to be driving
+the UI — they timed out with the manager sitting in the tray. See ``poke_thread``.
 
 A phone in deep sleep drops the first attempt with
 ``err_code=15033 "logical conn remote confirm timeout"``. That is a phone-side
@@ -53,6 +55,10 @@ _HELPER_CLASSES = (
     "PowerNotificationWindow",
     ".NET-BroadcastEventWindow",
 )
+
+_WM_NULL = 0x0000
+# How often to re-poke while waiting for the hook to fire
+_POKE_INTERVAL = 0.15
 
 _TASK_CREATE_RE = re.compile(
     r"HandleCreateSendTask device_id (\d+)"
@@ -244,6 +250,29 @@ def resolve_ui_thread(pid: int) -> int | None:
     return pick_ui_thread(enum_windows(pid))
 
 
+def thread_hwnds(windows: list[dict[str, Any]], tid: int) -> list[int]:
+    """Window handles owned by *tid*, used as targets for the wake-up poke."""
+    return [int(w["hwnd"]) for w in windows if int(w["tid"]) == int(tid)]
+
+
+def poke_thread(hwnds: list[int], tid: int) -> None:
+    """
+    Nudge a UI thread so its message loop takes another lap.
+
+    An idle manager blocks *inside* ``GetMessageW`` waiting for input, and a hook
+    on that function's entry cannot fire while the thread is parked in it. Posting
+    a harmless ``WM_NULL`` makes ``GetMessageW`` return; the loop dispatches it and
+    calls ``GetMessageW`` again, which is when the hook finally runs.
+
+    Without this, silent sends only worked while something else happened to be
+    driving the UI (an open MiDrop window, an animation), and timed out whenever
+    the manager sat quietly in the tray.
+    """
+    for h in hwnds:
+        _u.PostMessageW(wintypes.HWND(int(h)), _WM_NULL, 0, 0)
+    _u.PostThreadMessageW(wintypes.DWORD(int(tid)), _WM_NULL, 0, 0)
+
+
 # --------------------------------------------------------------- log verdict
 
 
@@ -323,7 +352,12 @@ def _build_js(path: str, device_id: int, ui_tid: int) -> str:
 
 
 def _invoke_once(
-    pid: int, path: str, device_id: int, ui_tid: int, timeout: float
+    pid: int,
+    path: str,
+    device_id: int,
+    ui_tid: int,
+    timeout: float,
+    hwnds: list[int] | None = None,
 ) -> tuple[bool, str, list[str]]:
     """Attach, fire CreateSend on the UI pump, detach. Returns (invoked, err, logs)."""
     import frida
@@ -354,7 +388,10 @@ def _invoke_once(
         while time.time() < deadline:
             if state["ok"] or state["err"]:
                 break
-            time.sleep(0.1)
+            # The pump may be parked inside GetMessageW; keep nudging it so the
+            # hook gets a chance to run. Harmless when the thread is already busy.
+            poke_thread(hwnds or [], ui_tid)
+            time.sleep(_POKE_INTERVAL)
     finally:
         try:
             session.detach()
@@ -437,7 +474,8 @@ def send_file_silent(
     base["device_hex"] = f"0x{device_id:X}"
     base["device_matched"] = label
 
-    ui_tid = resolve_ui_thread(pid)
+    windows = enum_windows(pid)
+    ui_tid = pick_ui_thread(windows)
     if not ui_tid:
         return {
             **base,
@@ -451,6 +489,7 @@ def send_file_silent(
             "exit_code": EXIT_ENV,
         }
     base["ui_tid"] = ui_tid
+    hwnds = thread_hwnds(windows, ui_tid)
 
     attempts = max(1, int(retry) + 1)
     logs: list[str] = []
@@ -460,7 +499,9 @@ def send_file_silent(
     for i in range(attempts):
         since = len(_read_tail(LYRA_LOG)) if confirm else 0
         try:
-            invoked, err, alogs = _invoke_once(pid, path, device_id, ui_tid, timeout)
+            invoked, err, alogs = _invoke_once(
+                pid, path, device_id, ui_tid, timeout, hwnds
+            )
         except Exception as e:
             return {
                 **base,

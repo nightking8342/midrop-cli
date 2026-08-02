@@ -4,3 +4,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+
+# 本地会话/任务数据，不进仓库
+.mindfs/
